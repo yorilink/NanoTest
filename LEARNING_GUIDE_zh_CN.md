@@ -313,3 +313,10 @@ go build
 ./cluster chat --listen "127.0.0.1:34580"
 ./cluster gate --listen "127.0.0.1:34570" --gate-address "127.0.0.1:34590"
 ```
+
+
+我现在想做的事情
+1.写nano集群。首先用nano加一个component gate，然后用nano加一个gameserver
+2. 客户端首先登录到gate上，gate上 从redis里是否有玩家信息，如果没有信息则告诉客户端需要创建角色
+3. 客户端发过来创建角色的信息，就是他的名字，然后创建角色，然后按照我对服务器的理解，gate上应该有玩家的简短信息以及他在哪个gameserver上 
+4. 然后消息从gate转发到gameserver上
