@@ -15,3 +15,7 @@
 
 .idea/
 .vscode/
+
+# Local build and runtime output
+bin/
+logs/
