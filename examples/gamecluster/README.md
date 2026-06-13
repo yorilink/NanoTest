@@ -1,92 +1,80 @@
-# Nano gamecluster example
+ func Listen(addr string, opts ...Option) 里的 opts ...Option 是 Go 的可变参数，意思是调用 nano.Listen
+  时可以传 0 个、1 个或多个配置项。
 
-这个示例演示一个基础游戏集群：
+  在 nano 里，Option 本质上是：
 
-- 客户端只连接 `gate`；
-- `gate` 校验 demo token，查询或创建角色摘要，并选择 `gameserver`；
-- `gameserver` 维护在线玩家状态；
-- 客户端后续直接请求 `GameService.*`，由 Nano cluster 转发到绑定的 gameserver。
+  type Option func(*cluster.Options)
 
-## 依赖
+  也就是说，每个 Option 都是一个函数，用来修改 nano 节点启动配置。
 
-示例运行时默认连接 Redis：
+  对你的 gamecluster 项目来说，addr 是当前进程的 RPC 服务地址，opts 决定这个进程是 master、gate 还是
+  gameserver，以及它注册哪些 component、是否开启 WebSocket、怎么连 master 等。
 
-```shell
-redis-server
-```
+  例如 master：
 
-默认地址是 `127.0.0.1:6379`，也可以通过 `--redis` 指定。
+  nano.Listen(listen,
+      nano.WithMaster(),
+      nano.WithSerializer(json.NewSerializer()),
+      nano.WithDebugMode(),
+  )
 
-当前 `store.RedisRepository` 是示例级最小 RESP 客户端，只实现本示例需要的 Redis 命令。生产环境应替换为成熟 Redis 客户端，并用 Lua 或事务保证建角写入的原子性。
+  含义：
 
-## 运行
+  - listen：master 的 RPC 地址，比如 127.0.0.1:34567
+  - WithMaster()：这个节点是 cluster master
+  - WithSerializer(...)：消息序列化用 JSON
+  - WithDebugMode()：打开调试日志
 
-```shell
-cd examples/gamecluster
-go build
+  gate：
 
-./gamecluster master
-./gamecluster game --listen "127.0.0.1:34680"
-./gamecluster game --listen "127.0.0.1:34681"
-./gamecluster gate --listen "127.0.0.1:34570" --gate-address "127.0.0.1:34590"
-```
+  nano.Listen(listen,
+      nano.WithAdvertiseAddr(masterAddr),
+      nano.WithClientAddr(gateAddr),
+      nano.WithComponents(gate.Services),
+      nano.WithSerializer(json.NewSerializer()),
+      nano.WithIsWebsocket(true),
+      nano.WithWSPath("/nano"),
+      nano.WithCheckOriginFunc(func(_ *http.Request) bool { return true }),
+      nano.WithCustomerRemoteServiceRoute(gate.RouteService().Route),
+      nano.WithDebugMode(),
+      nano.WithNodeId(2),
+  )
 
-WebSocket 客户端连接：
+  对你的项目最关键的是：
 
-```text
-ws://127.0.0.1:34590/nano
-```
+  - WithAdvertiseAddr(masterAddr)：告诉 gate 去哪里注册到 master
+  - WithClientAddr(gateAddr)：客户端 WebSocket 连接地址，比如 127.0.0.1:34590
+  - WithComponents(gate.Services)：注册 GateService
+  - WithIsWebsocket(true)：gate 接收 WebSocket 客户端
+  - WithWSPath("/nano")：客户端连接路径 /nano
+  - WithCustomerRemoteServiceRoute(...)：决定 GameService 消息转到哪个 gameserver
+  - WithNodeId(2)：设置 sessionId 雪花节点 ID，多 gate 时不能重复
 
-登录 token 使用 demo 格式：
+  gameserver：
 
-```text
-demo:10001
-```
+  nano.Listen(listen,
+      nano.WithAdvertiseAddr(masterAddr),
+      nano.WithComponents(game.Services),
+      nano.WithSerializer(json.NewSerializer()),
+      nano.WithDebugMode(),
+  )
 
-## 客户端路由
+  含义：
 
-登录：
+  - listen：gameserver 的 RPC 地址，比如 127.0.0.1:34680
+  - WithAdvertiseAddr(masterAddr)：注册到 master
+  - WithComponents(game.Services)：注册 GameService
 
-```text
-GateService.Login
-```
+  简单说：
 
-请求：
+  Listen(addr, opts...)
 
-```json
-{"token":"demo:10001"}
-```
+  就是：
 
-如果没有角色，会返回 `needCreateRole=true`。
+  启动一个 nano 节点，addr 是节点内部 RPC 地址，opts 是这个节点的各种配置开关。
 
-创建角色：
+  对你的游戏集群：
 
-```text
-GateService.CreateRole
-```
-
-请求：
-
-```json
-{"token":"demo:10001","name":"Alice"}
-```
-
-进入成功后，gameserver 会推送：
-
-```text
-GameService.Entered
-```
-
-验证后续游戏路由：
-
-```text
-GameService.Ping
-```
-
-请求：
-
-```json
-{"content":"hello"}
-```
-
-这个请求会被 Nano cluster 转发到 gate 绑定的 gameserver。
+  - master：只需要 WithMaster
+  - gate：需要 WebSocket、GateService、自定义 GameService 路由
+  - gameserver：需要 GameService，通常不需要客户端 WebSocket 端口

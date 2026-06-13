@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Nano Gamecluster Client</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, "Microsoft YaHei", sans-serif;
+            color: #1d2433;
+            background: #f3f5f8;
+        }
+
+        main {
+            max-width: 980px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        h1 {
+            margin: 0 0 18px;
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        .panel {
+            margin-bottom: 16px;
+            padding: 16px;
+            border: 1px solid #d8dee8;
+            border-radius: 8px;
+            background: #fff;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            color: #596579;
+        }
+
+        input {
+            width: 100%;
+            height: 36px;
+            margin-top: 6px;
+            padding: 0 10px;
+            border: 1px solid #c7cfdb;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        button {
+            height: 36px;
+            padding: 0 14px;
+            border: 1px solid #1f6feb;
+            border-radius: 6px;
+            background: #1f6feb;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        button.secondary {
+            border-color: #9aa6b8;
+            background: #fff;
+            color: #243043;
+        }
+
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+        }
+
+        .status {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: #eef2f7;
+            font-size: 13px;
+        }
+
+        pre {
+            min-height: 320px;
+            max-height: 520px;
+            margin: 0;
+            padding: 12px;
+            overflow: auto;
+            border-radius: 6px;
+            background: #111827;
+            color: #d1d5db;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+
+        @media (max-width: 720px) {
+            main {
+                padding: 14px;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Nano Gamecluster Client <span id="status" class="status">未连接</span></h1>
+
+    <section class="panel">
+        <div class="grid">
+            <label>
+                Gate Host
+                <input id="host" value="127.0.0.1">
+            </label>
+            <label>
+                Gate Port
+                <input id="port" value="34590">
+            </label>
+            <label>
+                WS Path
+                <input id="path" value="/nano">
+            </label>
+            <label>
+                Token
+                <input id="token" value="demo:10001">
+            </label>
+            <label>
+                Ping Content
+                <input id="pingContent" value="hello gameserver">
+            </label>
+        </div>
+
+        <div class="buttons">
+            <button id="loginBtn" onclick="login()">登录</button>
+            <button onclick="pingGame()">Ping GameServer</button>
+            <button class="secondary" onclick="clearLog()">清空日志</button>
+        </div>
+    </section>
+
+    <section class="panel">
+        <pre id="log"></pre>
+    </section>
+</main>
+
+<script src="./protocol.js"></script>
+<script src="./starx-wsclient.js"></script>
+<script>
+    var connected = false;
+    var connecting = false;
+
+    function value(id) {
+        return document.getElementById(id).value.trim();
+    }
+
+    function setStatus(text) {
+        document.getElementById("status").textContent = text;
+    }
+
+    function log(event, data) {
+        var line = {
+            time: new Date().toLocaleTimeString(),
+            event: event,
+            data: data
+        };
+        var el = document.getElementById("log");
+        el.textContent += JSON.stringify(line, null, 2) + "\n";
+        el.scrollTop = el.scrollHeight;
+    }
+
+    function clearLog() {
+        document.getElementById("log").textContent = "";
+    }
+
+    function connectGate(done) {
+        if (connected) {
+            done();
+            return;
+        }
+        if (connecting) {
+            log("client", "正在连接，请稍后");
+            return;
+        }
+        connecting = true;
+
+        var host = value("host");
+        var port = Number(value("port"));
+        var path = value("path") || "/nano";
+
+        setStatus("连接中");
+        starx.init({host: host, port: port, path: path}, function () {
+            connected = true;
+            connecting = false;
+            setStatus("已连接");
+            log("connected", {host: host, port: port, path: path});
+
+            starx.on("GameService.Entered", function (data) {
+                log("push GameService.Entered", data);
+            });
+
+            done();
+        });
+    }
+
+    function ensureConnected() {
+        if (!connected) {
+            log("client error", "还没有登录连接");
+            return false;
+        }
+        return true;
+    }
+
+    function login() {
+        connectGate(function () {
+            requestLogin();
+        });
+    }
+
+    function requestLogin() {
+        starx.request("GateService.Login", {token: value("token")}, function (data) {
+            log("response GateService.Login", data);
+            if (data && data.needCreateRole) {
+                createRoleByPrompt();
+            }
+        });
+    }
+
+    function createRoleByPrompt() {
+        if (!ensureConnected()) {
+            return;
+        }
+
+        var name = window.prompt("账号没有角色，请输入角色名", "Alice");
+        if (name === null) {
+            log("create role cancelled", "用户取消创建角色");
+            return;
+        }
+        name = name.trim();
+        if (name === "") {
+            log("create role failed", "角色名不能为空");
+            return;
+        }
+
+        starx.request("GateService.CreateRole", {
+            token: value("token"),
+            name: name
+        }, function (data) {
+            log("response GateService.CreateRole", data);
+        });
+    }
+
+    function pingGame() {
+        if (!ensureConnected()) {
+            return;
+        }
+
+        starx.request("GameService.Ping", {
+            content: value("pingContent")
+        }, function (data) {
+            log("response GameService.Ping", data);
+        });
+    }
+</script>
+</body>
+</html>

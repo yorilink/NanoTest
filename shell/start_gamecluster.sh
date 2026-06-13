@@ -13,6 +13,7 @@ GATE_RPC_ADDR="${GATE_RPC_ADDR:-127.0.0.1:34570}"
 GATE_WS_ADDR="${GATE_WS_ADDR:-127.0.0.1:34590}"
 REDIS_ADDR="${REDIS_ADDR:-127.0.0.1:6379}"
 GAME_ADDRS="${GAME_ADDRS:-127.0.0.1:34680 127.0.0.1:34681}"
+CLIENT_HTTP_ADDR="${CLIENT_HTTP_ADDR:-0.0.0.0:8080}"
 
 mkdir -p "${LOG_DIR}" "${PID_DIR}"
 
@@ -30,6 +31,11 @@ if ! (echo >"/dev/tcp/${redis_host}/${redis_port}") >/dev/null 2>&1; then
 fi
 
 "${SCRIPT_DIR}/build_gamecluster.sh"
+
+if ! command -v python3 >/dev/null 2>&1; then
+	echo "python3 is required to serve client files" >&2
+	exit 1
+fi
 
 sanitize_name() {
 	echo "$1" | tr '.:' '__'
@@ -76,8 +82,14 @@ start_proc "gate" "${BIN}" gate \
 	--gate-address "${GATE_WS_ADDR}" \
 	--redis "${REDIS_ADDR}"
 
+client_http_host="${CLIENT_HTTP_ADDR%:*}"
+client_http_port="${CLIENT_HTTP_ADDR##*:}"
+start_proc "client_http" python3 -m http.server "${client_http_port}" --bind "${client_http_host}" --directory "${ROOT_DIR}"
+
 echo
 echo "gamecluster started"
+echo "client: http://${CLIENT_HTTP_ADDR}/client/"
 echo "websocket: ws://${GATE_WS_ADDR}/nano"
 echo "logs: ${LOG_DIR}"
 echo "pids: ${PID_DIR}"
+echo "stop: ${SCRIPT_DIR}/stop_gamecluster.sh"
