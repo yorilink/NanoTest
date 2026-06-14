@@ -289,6 +289,7 @@ func (a *agent) write() {
 				ID:    data.mid,
 			}
 			if pipe := a.pipeline; pipe != nil {
+				//pipe.Outbound().Process(...) 更像中间件链，比如统计流量、加密、压缩、改 route、拦截消息等。它返回 error 的含义是：这条出站消息处理失败，不应该再发给客户端。所以代码用 break 放弃当前消息。
 				err := pipe.Outbound().Process(a.session, m)
 				if err != nil {
 					log.Println("broken pipeline", err.Error())
