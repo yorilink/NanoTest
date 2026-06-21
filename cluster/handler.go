@@ -309,7 +309,6 @@ func (h *LocalHandler) processPacket(agent *agent, p *packet.Packet) error {
 			return err
 		}
 		h.processMessage(agent, msg)
-
 	case packet.Heartbeat:
 		// expected
 	}
@@ -323,7 +322,6 @@ func (h *LocalHandler) findMembers(service string) []*clusterpb.MemberInfo {
 	defer h.mu.RUnlock()
 	return h.remoteServices[service]
 }
-
 func (h *LocalHandler) remoteProcess(session *session.Session, msg *message.Message, noCopy bool) {
 	index := strings.LastIndex(msg.Route, ".")
 	if index < 0 {
@@ -449,8 +447,17 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 	var payload = msg.Data
 	var data interface{}
 	if handler.IsRawArg {
+		// 第二个参数是 []byte 的 handler 直接接收原始包体，
+		// 不经过序列化器反序列化。
 		data = payload
 	} else {
+		// 非 raw handler 注册时要求签名类似：
+		//
+		//     func(*session.Session, *Request) error
+		//
+		// handler.Type 是第二个参数的反射类型，也就是 *Request。
+		// 这里先创建一个新的 Request 值，再把指针交给序列化器，
+		// 让序列化器把 payload 填充到结构体里。
 		data = reflect.New(handler.Type.Elem()).Interface()
 		err := env.Serializer.Unmarshal(payload, data)
 		if err != nil {
@@ -463,8 +470,14 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 		log.Println(fmt.Sprintf("UID=%d, Message={%s}, Data=%+v", session.UID(), msg.String(), data))
 	}
 
+	// reflect.Method.Func 是未绑定接收者的方法值，所以调用时必须把
+	// receiver 作为第一个参数显式传入。后两个参数则对应注册时的
+	// handler 签名：*session.Session，以及 []byte 或反序列化后的请求指针。
 	args := []reflect.Value{handler.Receiver, reflect.ValueOf(session), reflect.ValueOf(data)}
 	task := func() {
+		// 调用 handler 前先把请求 id 记录到连接对象上。
+		// 后续回复会读取这个值，把响应路由回原始客户端请求。
+		// Notify 消息没有请求 id，这里 lastMid 为 0。
 		switch v := session.NetworkEntity().(type) {
 		case *agent:
 			v.lastMid = lastMid
@@ -472,6 +485,8 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 			v.lastMid = lastMid
 		}
 
+		// 动态调用组件 handler。注册阶段已经校验过方法只返回一个值：
+		// error。
 		result := handler.Method.Func.Call(args)
 		if len(result) > 0 {
 			if err := result[0].Interface(); err != nil {
@@ -505,4 +520,15 @@ func (h *LocalHandler) localProcess(handler *component.Handler, lastMid uint64, 
 	} else {
 		scheduler.PushTask(task)
 	}
+	//todo: 这里需要修改
+	// 	  所以它的价值不是“让任务跑得更快”，而是：
+
+	//   控制业务逻辑在哪个执行上下文里运行
+	//   保证状态修改顺序
+	//   减少锁
+	//   隔离不同业务对象
+	//   统一处理消息和定时器
+
+	// 不过这个 nano 默认全局 scheduler 比较简单，chTasks 缓冲只有 1<<8，而且单 goroutine 消费。如果业务重、玩家多，只靠全局 scheduler 会成为瓶颈。生产级游戏服一般会进一步按房间、场景、玩家桶、战斗实例拆成多个
+	// scheduler。
 }
