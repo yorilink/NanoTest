@@ -51,6 +51,20 @@ func WithClientAddr(addr string) Option {
 	}
 }
 
+// WithKCPAddr sets the listen address for KCP client transport.
+func WithKCPAddr(addr string) Option {
+	return func(opt *cluster.Options) {
+		opt.KCPAddr = addr
+	}
+}
+
+// WithKCPConfig sets tuning parameters for KCP client transport.
+func WithKCPConfig(config cluster.KCPConfig) Option {
+	return func(opt *cluster.Options) {
+		opt.KCPConfig = config
+	}
+}
+
 // WithMaster sets the option to indicate whether the current node is master node
 func WithMaster() Option {
 	return func(opt *cluster.Options) {

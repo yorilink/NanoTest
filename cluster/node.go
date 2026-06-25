@@ -49,6 +49,8 @@ type Options struct {
 	AdvertiseAddr      string
 	RetryInterval      time.Duration
 	ClientAddr         string
+	KCPAddr            string
+	KCPConfig          KCPConfig
 	Components         *component.Components
 	Label              string
 	IsWebsocket        bool
@@ -117,6 +119,9 @@ func (n *Node) Startup() error {
 				n.listenAndServe()
 			}
 		}()
+	}
+	if n.KCPAddr != "" {
+		go n.listenAndServeKCP()
 	}
 
 	return nil
