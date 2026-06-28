@@ -19,3 +19,4 @@
 # Local build and runtime output
 bin/
 logs/
+examples/gamecluster/logs/

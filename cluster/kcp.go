@@ -42,10 +42,21 @@ func normalizeKCPConfig(config KCPConfig) KCPConfig {
 
 func (n *Node) listenAndServeKCP() {
 	config := normalizeKCPConfig(n.KCPConfig)
+	n.logStartup("kcp_listen_begin", "addr", n.KCPAddr)
 	listener, err := kcp.ListenWithOptions(n.KCPAddr, nil, 0, 0)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatalf("Nano startup kcp_listen_failed role=%s service=%s kcp=%s error=%v", n.role(), n.ServiceAddr, n.KCPAddr, err)
 	}
+	n.logStartup("kcp_listen_success",
+		"addr", n.KCPAddr,
+		"nodelay", config.NoDelay,
+		"interval", config.Interval,
+		"resend", config.Resend,
+		"nc", config.NC,
+		"mtu", config.MTU,
+		"sndwnd", config.SndWnd,
+		"rcvwnd", config.RcvWnd,
+	)
 
 	defer listener.Close()
 	if config.ReadBuffer > 0 {
@@ -67,7 +78,7 @@ func (n *Node) listenAndServeKCP() {
 	for {
 		conn, err := listener.AcceptKCP()
 		if err != nil {
-			log.Println(err.Error())
+			log.Println("Nano kcp accept failed", "addr", n.KCPAddr, "error", err)
 			continue
 		}
 

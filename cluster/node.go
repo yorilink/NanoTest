@@ -87,27 +87,50 @@ func (n *Node) Startup() error {
 	n.cluster = newCluster(n)
 	n.handler = NewHandler(n, n.Pipeline)
 	components := n.Components.List()
+	n.logStartup("begin", "components", len(components))
 	for _, c := range components {
+		componentName := fmt.Sprintf("%T", c.Comp)
+		n.logStartup("component_register_begin", "component", componentName)
 		err := n.handler.register(c.Comp, c.Opts)
 		if err != nil {
+			n.logStartup("component_register_failed", "component", componentName, "error", err)
 			return err
 		}
+		n.logStartup("component_register_success", "component", componentName)
 	}
 
+	n.logStartup("cache_begin")
 	cache()
+	n.logStartup("cache_success")
 	if err := n.initNode(); err != nil {
+		n.logStartup("cluster_init_failed", "error", err)
 		return err
 	}
+	n.logStartup("cluster_init_success")
 
 	// Initialize all components
 	for _, c := range components {
+		componentName := fmt.Sprintf("%T", c.Comp)
+		n.logStartup("component_init_begin", "component", componentName)
 		c.Comp.Init()
+		n.logStartup("component_init_success", "component", componentName)
 	}
 	for _, c := range components {
+		componentName := fmt.Sprintf("%T", c.Comp)
+		n.logStartup("component_after_init_begin", "component", componentName)
 		c.Comp.AfterInit()
+		n.logStartup("component_after_init_success", "component", componentName)
 	}
 
 	if n.ClientAddr != "" {
+		transport := "tcp"
+		if n.IsWebsocket {
+			transport = "websocket"
+			if len(n.TSLCertificate) != 0 {
+				transport = "websocket_tls"
+			}
+		}
+		n.logStartup("client_listener_starting", "transport", transport, "addr", n.ClientAddr)
 		go func() {
 			if n.IsWebsocket {
 				if len(n.TSLCertificate) != 0 {
@@ -121,9 +144,11 @@ func (n *Node) Startup() error {
 		}()
 	}
 	if n.KCPAddr != "" {
+		n.logStartup("kcp_listener_starting", "addr", n.KCPAddr)
 		go n.listenAndServeKCP()
 	}
 
+	n.logStartup("success")
 	return nil
 }
 
@@ -135,28 +160,35 @@ func (n *Node) initNode() error {
 	// Current node is not master server and does not contains master
 	// address, so running in singleton mode
 	if !n.IsMaster && n.AdvertiseAddr == "" {
+		n.logStartup("singleton_mode", "cluster_rpc", "disabled")
 		return nil
 	}
 
+	n.logStartup("cluster_rpc_listen_begin", "addr", n.ServiceAddr)
 	listener, err := net.Listen("tcp", n.ServiceAddr)
 	if err != nil {
+		n.logStartup("cluster_rpc_listen_failed", "addr", n.ServiceAddr, "error", err)
 		return err
 	}
+	n.logStartup("cluster_rpc_listen_success", "addr", n.ServiceAddr)
 
 	// Initialize the gRPC server and register service
 	n.server = grpc.NewServer()
 	n.rpcClient = newRPCClient()
 	clusterpb.RegisterMemberServer(n.server, n)
+	n.logStartup("grpc_member_registered", "addr", n.ServiceAddr)
 
 	go func() {
+		n.logStartup("grpc_serve_begin", "addr", n.ServiceAddr)
 		err := n.server.Serve(listener)
 		if err != nil {
-			log.Fatalf("Start current node failed: %v", err)
+			log.Fatalf("Nano startup grpc_serve_failed role=%s service=%s error=%v", n.role(), n.ServiceAddr, err)
 		}
 	}()
 
 	if n.IsMaster {
 		clusterpb.RegisterMasterServer(n.server, n.cluster)
+		n.logStartup("grpc_master_registered", "addr", n.ServiceAddr)
 		member := &Member{
 			isMaster: true,
 			memberInfo: &clusterpb.MemberInfo{
@@ -167,11 +199,15 @@ func (n *Node) initNode() error {
 		}
 		n.cluster.members = append(n.cluster.members, member)
 		n.cluster.setRpcClient(n.rpcClient)
+		n.logStartup("master_ready", "services", len(n.handler.LocalService()))
 	} else {
+		n.logStartup("master_conn_begin", "master", n.AdvertiseAddr)
 		pool, err := n.rpcClient.getConnPool(n.AdvertiseAddr)
 		if err != nil {
+			n.logStartup("master_conn_failed", "master", n.AdvertiseAddr, "error", err)
 			return err
 		}
+		n.logStartup("master_conn_success", "master", n.AdvertiseAddr)
 		client := clusterpb.NewMasterClient(pool.Get())
 		request := &clusterpb.RegisterRequest{
 			MemberInfo: &clusterpb.MemberInfo{
@@ -180,17 +216,20 @@ func (n *Node) initNode() error {
 				Services:    n.handler.LocalService(),
 			},
 		}
+		n.logStartup("master_register_begin", "master", n.AdvertiseAddr)
 		for {
 			resp, err := client.Register(context.Background(), request)
 			if err == nil {
 				n.handler.initRemoteService(resp.Members)
 				n.cluster.initMembers(resp.Members)
+				n.logStartup("master_register_success", "master", n.AdvertiseAddr, "members", len(resp.Members))
 				break
 			}
-			log.Println("Register current node to cluster failed", err, "and will retry in", n.RetryInterval.String())
+			n.logStartup("master_register_failed", "master", n.AdvertiseAddr, "retry_in", n.RetryInterval.String(), "error", err)
 			time.Sleep(n.RetryInterval)
 		}
 		n.once.Do(n.keepalive)
+		n.logStartup("heartbeat_started", "master", n.AdvertiseAddr, "interval", env.Heartbeat.String())
 	}
 	return nil
 }
@@ -238,16 +277,18 @@ EXIT:
 
 // Enable current server accept connection
 func (n *Node) listenAndServe() {
+	n.logStartup("client_tcp_listen_begin", "addr", n.ClientAddr)
 	listener, err := net.Listen("tcp", n.ClientAddr)
 	if err != nil {
-		log.Fatal(err.Error())
+		log.Fatalf("Nano startup client_tcp_listen_failed role=%s service=%s client=%s error=%v", n.role(), n.ServiceAddr, n.ClientAddr, err)
 	}
+	n.logStartup("client_tcp_listen_success", "addr", n.ClientAddr)
 
 	defer listener.Close()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Println(err.Error())
+			log.Println("Nano client tcp accept failed", "addr", n.ClientAddr, "error", err)
 			continue
 		}
 
@@ -261,8 +302,10 @@ func (n *Node) listenAndServeWS() {
 		WriteBufferSize: 1024,
 		CheckOrigin:     env.CheckOrigin,
 	}
+	path := "/" + strings.TrimPrefix(env.WSPath, "/")
+	n.logStartup("client_ws_route_register", "addr", n.ClientAddr, "path", path)
 
-	http.HandleFunc("/"+strings.TrimPrefix(env.WSPath, "/"), func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Println(fmt.Sprintf("Upgrade failure, URI=%s, Error=%s", r.RequestURI, err.Error()))
@@ -272,8 +315,15 @@ func (n *Node) listenAndServeWS() {
 		n.handler.handleWS(conn)
 	})
 
-	if err := http.ListenAndServe(n.ClientAddr, nil); err != nil {
-		log.Fatal(err.Error())
+	n.logStartup("client_ws_listen_begin", "addr", n.ClientAddr, "path", path)
+	listener, err := net.Listen("tcp", n.ClientAddr)
+	if err != nil {
+		log.Fatalf("Nano startup client_ws_listen_failed role=%s service=%s client=%s path=%s error=%v", n.role(), n.ServiceAddr, n.ClientAddr, path, err)
+	}
+	n.logStartup("client_ws_listen_success", "addr", n.ClientAddr, "path", path)
+	defer listener.Close()
+	if err := http.Serve(listener, nil); err != nil {
+		log.Fatalf("Nano startup client_ws_serve_failed role=%s service=%s client=%s path=%s error=%v", n.role(), n.ServiceAddr, n.ClientAddr, path, err)
 	}
 }
 
@@ -283,8 +333,10 @@ func (n *Node) listenAndServeWSTLS() {
 		WriteBufferSize: 1024,
 		CheckOrigin:     env.CheckOrigin,
 	}
+	path := "/" + strings.TrimPrefix(env.WSPath, "/")
+	n.logStartup("client_wss_route_register", "addr", n.ClientAddr, "path", path)
 
-	http.HandleFunc("/"+strings.TrimPrefix(env.WSPath, "/"), func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Println(fmt.Sprintf("Upgrade failure, URI=%s, Error=%s", r.RequestURI, err.Error()))
@@ -294,9 +346,43 @@ func (n *Node) listenAndServeWSTLS() {
 		n.handler.handleWS(conn)
 	})
 
-	if err := http.ListenAndServeTLS(n.ClientAddr, n.TSLCertificate, n.TSLKey, nil); err != nil {
-		log.Fatal(err.Error())
+	n.logStartup("client_wss_listen_begin", "addr", n.ClientAddr, "path", path, "cert", n.TSLCertificate, "key", n.TSLKey)
+	listener, err := net.Listen("tcp", n.ClientAddr)
+	if err != nil {
+		log.Fatalf("Nano startup client_wss_listen_failed role=%s service=%s client=%s path=%s cert=%s key=%s error=%v", n.role(), n.ServiceAddr, n.ClientAddr, path, n.TSLCertificate, n.TSLKey, err)
 	}
+	n.logStartup("client_wss_listen_success", "addr", n.ClientAddr, "path", path, "cert", n.TSLCertificate, "key", n.TSLKey)
+	defer listener.Close()
+	if err := http.ServeTLS(listener, nil, n.TSLCertificate, n.TSLKey); err != nil {
+		log.Fatalf("Nano startup client_wss_serve_failed role=%s service=%s client=%s path=%s cert=%s key=%s error=%v", n.role(), n.ServiceAddr, n.ClientAddr, path, n.TSLCertificate, n.TSLKey, err)
+	}
+}
+
+func (n *Node) logStartup(stage string, fields ...interface{}) {
+	args := []interface{}{
+		"Nano startup", stage,
+		"role", n.role(),
+		"service", n.ServiceAddr,
+		"master", n.AdvertiseAddr,
+		"client", n.ClientAddr,
+		"kcp", n.KCPAddr,
+		"label", n.Label,
+	}
+	args = append(args, fields...)
+	log.Println(args...)
+}
+
+func (n *Node) role() string {
+	if n.IsMaster {
+		return "master"
+	}
+	if n.ClientAddr != "" {
+		return "gate"
+	}
+	if n.AdvertiseAddr != "" {
+		return "member"
+	}
+	return "singleton"
 }
 
 func (n *Node) storeSession(s *session.Session) {

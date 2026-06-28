@@ -48,6 +48,8 @@ start_process() {
 	sleep 0.2
 	if ! is_running "${pid}"; then
 		echo "${name} failed to start, see ${log_file}"
+		echo "last ${name} log lines:"
+		tail -n 40 "${log_file}" || true
 		rm -f "${pid_file}"
 		return 1
 	fi

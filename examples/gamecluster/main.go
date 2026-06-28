@@ -62,7 +62,7 @@ func runMaster(args *cli.Context) error {
 		return errors.Errorf("master listen address cannot empty")
 	}
 
-	log.Println("Nano gamecluster master listen address", listen)
+	log.Println("gamecluster startup", "role", "master", "listen", listen)
 	nano.Listen(listen,
 		nano.WithMaster(),
 		nano.WithSerializer(json.NewSerializer()),
@@ -84,14 +84,13 @@ func runGate(args *cli.Context) error {
 	if masterAddr == "" {
 		return errors.Errorf("master address cannot empty")
 	}
+	redisAddr := args.String("redis")
 
-	repo := store.NewRedisRepository(args.String("redis"))
+	log.Println("gamecluster startup", "role", "gate", "listen", listen, "master", masterAddr, "gate_client", gateAddr, "redis", redisAddr, "ws_path", "/nano")
+	repo := store.NewRedisRepository(redisAddr)
 	gate.Init(repo, gateAddr)
 	session.Lifetime.OnClosed(gate.OnSessionClosed)
 
-	log.Println("Nano gamecluster gate service listen address", listen)
-	log.Println("Nano gamecluster gate websocket address", gateAddr)
-	log.Println("Nano gamecluster master address", masterAddr)
 	nano.Listen(listen,
 		nano.WithAdvertiseAddr(masterAddr),
 		nano.WithClientAddr(gateAddr),
@@ -117,13 +116,13 @@ func runGame(args *cli.Context) error {
 	if masterAddr == "" {
 		return errors.Errorf("master address cannot empty")
 	}
+	redisAddr := args.String("redis")
 
-	repo := store.NewRedisRepository(args.String("redis"))
+	log.Println("gamecluster startup", "role", "game", "listen", listen, "master", masterAddr, "redis", redisAddr)
+	repo := store.NewRedisRepository(redisAddr)
 	game.Init(repo, listen)
 	session.Lifetime.OnClosed(game.OnSessionClosed)
 
-	log.Println("Nano gamecluster gameserver listen address", listen)
-	log.Println("Nano gamecluster master address", masterAddr)
 	nano.Listen(listen,
 		nano.WithAdvertiseAddr(masterAddr),
 		nano.WithComponents(game.Services),

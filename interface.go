@@ -77,6 +77,15 @@ func Listen(addr string, opts ...Option) {
 	for _, option := range opts {
 		option(&opt)
 	}
+	log.Println("Nano listen options",
+		"service", addr,
+		"is_master", opt.IsMaster,
+		"master", opt.AdvertiseAddr,
+		"client", opt.ClientAddr,
+		"kcp", opt.KCPAddr,
+		"websocket", opt.IsWebsocket,
+		"label", opt.Label,
+	)
 
 	// Use listen address as client address in non-cluster mode
 	if !opt.IsMaster && opt.AdvertiseAddr == "" && opt.ClientAddr == "" {
