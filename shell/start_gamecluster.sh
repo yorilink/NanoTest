@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 BIN="${BIN:-${ROOT_DIR}/bin/gamecluster}"
+BIN_DIR="$(dirname "${BIN}")"
+MASTER_BIN="${MASTER_BIN:-${BIN_DIR}/masterserver}"
+GAME_BIN="${GAME_BIN:-${BIN_DIR}/gameserver}"
+GATE_BIN="${GATE_BIN:-${BIN_DIR}/gateserver}"
 LOG_DIR="${LOG_DIR:-${ROOT_DIR}/logs/gamecluster}"
 PID_DIR="${PID_DIR:-${LOG_DIR}}"
 
@@ -30,7 +34,19 @@ if ! (echo >"/dev/tcp/${redis_host}/${redis_port}") >/dev/null 2>&1; then
 	exit 1
 fi
 
-"${SCRIPT_DIR}/build_gamecluster.sh"
+OUTPUT="${BIN}" "${SCRIPT_DIR}/build_gamecluster.sh"
+
+install_role_binary() {
+	local target="$1"
+	local tmp="${target}.tmp"
+
+	cp "${BIN}" "${tmp}"
+	mv -f "${tmp}" "${target}"
+}
+
+install_role_binary "${MASTER_BIN}"
+install_role_binary "${GAME_BIN}"
+install_role_binary "${GATE_BIN}"
 
 if ! command -v python3 >/dev/null 2>&1; then
 	echo "python3 is required to serve client files" >&2
@@ -67,16 +83,16 @@ start_proc() {
 	echo "  log: ${log_file}"
 }
 
-start_proc "master" "${BIN}" master --listen "${MASTER_ADDR}"
+start_proc "master" "${MASTER_BIN}" master --listen "${MASTER_ADDR}"
 sleep 1
 
 for game_addr in ${GAME_ADDRS}; do
 	name="game_$(sanitize_name "${game_addr}")"
-	start_proc "${name}" "${BIN}" game --master "${MASTER_ADDR}" --listen "${game_addr}" --redis "${REDIS_ADDR}"
+	start_proc "${name}" "${GAME_BIN}" game --master "${MASTER_ADDR}" --listen "${game_addr}" --redis "${REDIS_ADDR}"
 done
 sleep 1
 
-start_proc "gate" "${BIN}" gate \
+start_proc "gate" "${GATE_BIN}" gate \
 	--master "${MASTER_ADDR}" \
 	--listen "${GATE_RPC_ADDR}" \
 	--gate-address "${GATE_WS_ADDR}" \

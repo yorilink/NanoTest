@@ -20,3 +20,4 @@
 bin/
 logs/
 examples/gamecluster/logs/
+examples/gamecluster/run/
